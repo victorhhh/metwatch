@@ -1,0 +1,9 @@
+{
+  "watchedProcesses": [
+    { "name": "node", "label": "Node Apps" },
+    { "name": "bun",  "label": "Bun Apps" },
+    { "name": "python", "label": "Python" }
+  ],
+  "refreshInterval": 1000,
+  "maxProcesses": 50
+}

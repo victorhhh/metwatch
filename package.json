@@ -1,0 +1,50 @@
+{
+  "name": "metwatch",
+  "version": "0.1.0",
+  "description": "Terminal process monitoring & management tool — like htop + PM2 in your terminal",
+  "module": "index.ts",
+  "main": "index.ts",
+  "type": "module",
+  "bin": {
+    "mw": "./bin/mw.ts"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "index.ts",
+    "metwatch.config.json"
+  ],
+  "keywords": [
+    "process",
+    "monitor",
+    "tui",
+    "cli",
+    "htop",
+    "pm2",
+    "bun",
+    "terminal",
+    "dashboard"
+  ],
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "scripts": {
+    "start": "bun run index.ts",
+    "dev": "bun run --watch index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/node": "^25.8.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
+    "chalk": "^5.6.2",
+    "pidusage": "^4.0.1",
+    "systeminformation": "^5.31.6"
+  }
+}

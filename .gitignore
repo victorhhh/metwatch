@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+.bun/
+
+# Build output
+dist/
+build/
+out/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+.DS_Store?
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# MetWatch internals
+AGENTS.md
