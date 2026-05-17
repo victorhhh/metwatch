@@ -1,6 +1,6 @@
 {
   "name": "metwatch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Terminal process monitoring & management tool — like htop + PM2 in your terminal",
   "module": "index.ts",
   "main": "index.ts",
