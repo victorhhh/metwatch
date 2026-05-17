@@ -1,45 +1,16 @@
 // ---------------------------------------------------------------------------
-// Screen
+// Screen shim — ink/React replacement
 //
-// Creates and exports the blessed screen singleton. This is the only place
-// in the codebase where `blessed.screen()` is called. All other modules
-// receive the screen via parameter or import this module.
-//
-// Configuration choices:
-//   smartCSR  — only redraw damaged regions (significant perf boost)
-//   fullUnicode — required for block chars (█) used in bars/gauges
-//   dockBorders — adjacent panels share border chars cleanly (┬ ┤ etc.)
-//   autoPadding — children auto-respect parent border+padding
+// In the blessed era this module owned the screen singleton and a render
+// coalescer. With ink, React drives re-renders automatically; this module
+// is kept as a no-op shim so any residual imports compile without changes.
 // ---------------------------------------------------------------------------
 
-import blessed from 'blessed';
-import type { BlessedScreen } from 'blessed';
+/** No-op in ink mode — React re-renders on state change. */
+export function scheduleRender(): void { /* no-op */ }
 
-let _screen: BlessedScreen | null = null;
+/** No-op — ink's render() in index.ts owns the terminal. */
+export function createScreen(): void { /* no-op */ }
 
-export function createScreen(): BlessedScreen {
-  if (_screen) return _screen;
-
-  _screen = blessed.screen({
-    smartCSR: true,
-    fullUnicode: true,
-    dockBorders: true,
-    autoPadding: true,
-    title: 'MetWatch',
-    ignoreLocked: ['C-c'],
-  });
-
-  return _screen;
-}
-
-export function getScreen(): BlessedScreen {
-  if (!_screen) throw new Error('Screen not initialized. Call createScreen() first.');
-  return _screen;
-}
-
-export function destroyScreen(): void {
-  if (_screen) {
-    _screen.destroy();
-    _screen = null;
-  }
-}
+/** No-op — ink's unmount() in index.ts owns teardown. */
+export function destroyScreen(): void { /* no-op */ }

@@ -3,9 +3,9 @@
 //
 // Wraps systeminformation network APIs to produce normalized NetworkMetrics.
 //
-// Two si calls per tick:
-//   si.networkInterfaces()  → static info (IP addresses, operstate)
-//   si.networkStats()       → cumulative byte/packet counters (delta-based)
+// Per-tick call: si.networkStats() — cumulative byte/packet counters (delta-based)
+// Cached call:   si.networkInterfaces() — static info refreshed every 30 s or on
+//                the first call. IP addresses and operstate almost never change.
 //
 // Rates are calculated as deltas between successive calls — same approach as
 // disk.service.ts. First call returns zero rates.
@@ -30,6 +30,28 @@ interface IfaceSnapshot {
 
 const _prev = new Map<string, IfaceSnapshot>();
 
+// ── Static interface cache ────────────────────────────────────────────────────
+// networkInterfaces() enumerates all NICs including virtual ones — expensive.
+// Cache for 30 s; refresh on expiry or when a previously-unknown iface appears.
+
+const IFACE_CACHE_TTL = 30_000;
+let _ifaceCache: Map<string, { ip4: string; ip6: string; operstate: string }> = new Map();
+let _ifaceCacheTs = 0;
+
+async function getStaticIfaceMap(): Promise<Map<string, { ip4: string; ip6: string; operstate: string }>> {
+  const now = Date.now();
+  if (now - _ifaceCacheTs < IFACE_CACHE_TTL) return _ifaceCache;
+
+  const raw = await si.networkInterfaces();
+  const arr = Array.isArray(raw) ? raw : [raw];
+  _ifaceCache = new Map(arr.map(i => [
+    i.iface,
+    { ip4: i.ip4 ?? '', ip6: i.ip6 ?? '', operstate: i.operstate ?? '' },
+  ]));
+  _ifaceCacheTs = now;
+  return _ifaceCache;
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function operstate(s: string | undefined): 'up' | 'down' | 'unknown' {
@@ -38,19 +60,19 @@ function operstate(s: string | undefined): 'up' | 'down' | 'unknown' {
   return 'unknown';
 }
 
+// ── Collator for sorting (avoids constructing one inside the comparator) ──────
+const _collator = new Intl.Collator(undefined, { sensitivity: 'base' });
+
 // ── Fetch ─────────────────────────────────────────────────────────────────────
 
 export async function fetchNetworkMetrics(): Promise<NetworkMetrics> {
   const now = Date.now();
 
-  const [ifaces, stats] = await Promise.all([
-    si.networkInterfaces(),
+  // Stats every tick; static info from cache (refreshed every 30 s)
+  const [stats, staticInfo] = await Promise.all([
     si.networkStats('*'),
+    getStaticIfaceMap(),
   ]);
-
-  // Build a map of static info keyed by iface name
-  const ifaceArray = Array.isArray(ifaces) ? ifaces : [ifaces];
-  const staticInfo = new Map(ifaceArray.map(i => [i.iface, i]));
 
   const statsArray = Array.isArray(stats) ? stats : [stats];
 
@@ -65,18 +87,10 @@ export async function fetchNetworkMetrics(): Promise<NetworkMetrics> {
     const prev = _prev.get(iface);
     const dtSec = prev ? Math.max(0.001, (now - prev.ts) / 1000) : 1;
 
-    const rxBPS = prev
-      ? Math.max(0, ((s.rx_bytes ?? 0) - prev.rx_bytes) / dtSec)
-      : 0;
-    const txBPS = prev
-      ? Math.max(0, ((s.tx_bytes ?? 0) - prev.tx_bytes) / dtSec)
-      : 0;
-    const rxPPS = prev
-      ? Math.max(0, ((s.rx_sec   ?? 0) - prev.rx_sec)   / dtSec)
-      : 0;
-    const txPPS = prev
-      ? Math.max(0, ((s.tx_sec   ?? 0) - prev.tx_sec)   / dtSec)
-      : 0;
+    const rxBPS = prev ? Math.max(0, ((s.rx_bytes ?? 0) - prev.rx_bytes) / dtSec) : 0;
+    const txBPS = prev ? Math.max(0, ((s.tx_bytes ?? 0) - prev.tx_bytes) / dtSec) : 0;
+    const rxPPS = prev ? Math.max(0, ((s.rx_sec   ?? 0) - prev.rx_sec)   / dtSec) : 0;
+    const txPPS = prev ? Math.max(0, ((s.tx_sec   ?? 0) - prev.tx_sec)   / dtSec) : 0;
 
     _prev.set(iface, {
       rx_bytes:   s.rx_bytes   ?? 0,
@@ -114,12 +128,12 @@ export async function fetchNetworkMetrics(): Promise<NetworkMetrics> {
     });
   }
 
-  // Sort: up interfaces first, then by name
+  // Sort: up interfaces first, then by name using cached collator
   interfaces.sort((a, b) => {
     if (a.operstate !== b.operstate) {
       return a.operstate === 'up' ? -1 : 1;
     }
-    return a.iface.localeCompare(b.iface);
+    return _collator.compare(a.iface, b.iface);
   });
 
   return {

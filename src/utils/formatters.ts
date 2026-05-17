@@ -8,15 +8,19 @@
 
 const BYTE_UNITS = ['B', 'KB', 'MB', 'GB', 'TB'] as const;
 
+// Hoisted constants — avoid recomputing inside hot-path functions.
+const LOG_1024  = Math.log(1024);
+const BYTE_DIVS = [1, 1024, 1_048_576, 1_073_741_824, 1_099_511_627_776] as const;
+
 /**
  * Format bytes into the most appropriate human-readable unit.
  * @example formatBytes(1536) → "1.5 KB"
  */
 export function formatBytes(bytes: number, decimals = 1): string {
   if (bytes <= 0) return '0 B';
-  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const i      = Math.floor(Math.log(bytes) / LOG_1024);
   const capped = Math.min(i, BYTE_UNITS.length - 1);
-  const value = bytes / Math.pow(1024, capped);
+  const value  = bytes / BYTE_DIVS[capped]!;
   return `${value.toFixed(decimals)} ${BYTE_UNITS[capped]}`;
 }
 
@@ -49,7 +53,8 @@ export function formatUptime(seconds: number): string {
  * @example truncate('hello world', 8) → "hello..."
  */
 export function truncate(str: string, maxLen: number): string {
-  if (str.length <= maxLen) return str.padEnd(maxLen);
+  if (str.length === maxLen) return str;          // already exact — no allocation
+  if (str.length < maxLen)  return str.padEnd(maxLen);
   return str.slice(0, maxLen - 3) + '...';
 }
 
@@ -63,12 +68,11 @@ export function bar(percent: number, width = 20): string {
 }
 
 /**
- * Color-code a percentage as a blessed tag string.
+ * Return an ink/React color string for a percentage value.
  * green < 60, yellow < 85, red >= 85
  */
-export function colorPercent(percent: number): string {
-  const formatted = formatPercent(percent);
-  if (percent >= 85) return `{red-fg}${formatted}{/red-fg}`;
-  if (percent >= 60) return `{yellow-fg}${formatted}{/yellow-fg}`;
-  return `{green-fg}${formatted}{/green-fg}`;
+export function colorPercent(percent: number): 'red' | 'yellow' | 'green' {
+  if (percent >= 85) return 'red';
+  if (percent >= 60) return 'yellow';
+  return 'green';
 }

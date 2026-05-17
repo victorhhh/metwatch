@@ -119,13 +119,21 @@ function cdpCall<T>(
 ): Promise<T> {
   return new Promise((resolve, reject) => {
     const id = session.id++;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     session.pending.set(id, {
-      resolve: resolve as (v: unknown) => void,
-      reject,
+      resolve: (v) => {
+        if (timeoutHandle !== null) { clearTimeout(timeoutHandle); timeoutHandle = null; }
+        (resolve as (v: unknown) => void)(v);
+      },
+      reject: (e) => {
+        if (timeoutHandle !== null) { clearTimeout(timeoutHandle); timeoutHandle = null; }
+        reject(e);
+      },
     });
     session.ws.send(JSON.stringify({ id, method, params }));
     // Timeout individual calls to avoid hanging
-    setTimeout(() => {
+    timeoutHandle = setTimeout(() => {
+      timeoutHandle = null;
       if (session.pending.has(id)) {
         session.pending.delete(id);
         reject(new Error(`CDP timeout: ${method}`));
@@ -228,6 +236,7 @@ async function pollProcess(
 export function createRuntimeManager(intervalMs: number): RuntimeManagerHandle {
   const sessions = new Map<string, ProcessSession>();
   let timer: ReturnType<typeof setInterval> | null = null;
+  let warmupTimer: ReturnType<typeof setTimeout> | null = null;
 
   async function tick(): Promise<void> {
     for (const ps of sessions.values()) {
@@ -241,9 +250,9 @@ export function createRuntimeManager(intervalMs: number): RuntimeManagerHandle {
   }
 
   function startTimer(): void {
-    if (timer !== null) return;
-    // Slight delay on first poll to give the inspector time to warm up
-    setTimeout(() => {
+    if (timer !== null || warmupTimer !== null) return;
+    warmupTimer = setTimeout(() => {
+      warmupTimer = null;
       void tick();
       timer = setInterval(() => void tick(), intervalMs);
     }, 1500);
@@ -281,6 +290,7 @@ export function createRuntimeManager(intervalMs: number): RuntimeManagerHandle {
   }
 
   function stop(): void {
+    if (warmupTimer !== null) { clearTimeout(warmupTimer); warmupTimer = null; }
     if (timer !== null) { clearInterval(timer); timer = null; }
     for (const ps of sessions.values()) {
       try { ps.session?.ws.close(); } catch { /* ignore */ }

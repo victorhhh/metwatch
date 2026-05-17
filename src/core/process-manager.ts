@@ -22,6 +22,7 @@ interface ProcessManagerHandle {
 
 export function createProcessManager(config: ResolvedConfig): ProcessManagerHandle {
   let timer: ReturnType<typeof setInterval> | null = null;
+  let startTimer: ReturnType<typeof setTimeout> | null = null;
   let running = false;
 
   // Listen for kill requests from the UI
@@ -61,18 +62,21 @@ export function createProcessManager(config: ResolvedConfig): ProcessManagerHand
   function start(): void {
     if (running) return;
     running = true;
-    void tick();
-    timer = setInterval(() => void tick(), config.refreshInterval);
+    // Stagger 200ms behind metrics-manager to avoid simultaneous event-loop saturation.
+    // Use 2× the metrics interval so process polls never coincide with metrics polls.
+    startTimer = setTimeout(() => {
+      startTimer = null;
+      void tick();
+      timer = setInterval(() => void tick(), config.refreshInterval * 2);
+    }, 200);
   }
 
   function stop(): void {
     if (!running) return;
     running = false;
     unsubKill();
-    if (timer !== null) {
-      clearInterval(timer);
-      timer = null;
-    }
+    if (startTimer !== null) { clearTimeout(startTimer); startTimer = null; }
+    if (timer !== null) { clearInterval(timer); timer = null; }
   }
 
   return { start, stop };

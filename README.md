@@ -17,8 +17,8 @@
 - **CPU panel** — overall usage percentage + per-core bars, color-coded by load
 - **Memory panel** — RAM used / free / cached / total with visual gauge
 - **Disk panel** — per-mount usage bars with read/write IO rates
-- **Network panel** — realtime RX/TX throughput graph (last 30 s) + per-interface stats
-- **Process table** — all system processes sorted by CPU or memory; dual-mode (All / Watched)
+- **Network panel** — realtime RX/TX throughput sparkline (last 60 s) + per-interface stats
+- **Process table** — all system processes sorted by CPU or memory; dual-mode (All / Watched); viewport-capped (no terminal scroll)
 - **Managed processes** — launch scripts with `mw start`, get auto-restart with exponential back-off
 - **Runtime metrics** — Node.js / Bun heap, RSS, event-loop lag and GC stats via Chrome DevTools Protocol
 - **Log streaming** — stdout/stderr of managed processes buffered and displayed in the Logs panel
@@ -252,7 +252,7 @@ MetWatch reads `metwatch.config.json` from the current working directory at star
 | **CPU** | always on | Overall CPU% + per-core bars colored by load |
 | **Memory** | always on | RAM used / free / cached / total with gauge |
 | **Disk** | `d` | Per-mount usage bars + read/write IO rates (MB/s) |
-| **Network** | `n` | Per-interface RX/TX rates + 30-second throughput graph |
+| **Network** | `n` | Per-interface RX/TX rates + 60-second throughput sparkline |
 | **Runtime** | `R` | Heap, RSS, event-loop lag, GC stats for managed processes |
 | **Processes** | `p` | Scrollable process table — All or Watched mode |
 | **Logs** | `l` (focus) | Buffered stdout/stderr of managed processes |
@@ -311,9 +311,9 @@ Contributions are welcome! Here is how to get started:
 ### Code conventions (summary)
 
 - **TypeScript strict mode** — no `any`, no `@ts-ignore` without a comment
-- **Factory functions** over classes — use `create*()` returning plain objects
-- **Event bus** — every `bus.on()` must store and call its unsubscribe in `destroy()`
-- **Widgets are stateless renderers** — no domain data, only UI state
+- **Factory functions** over classes — managers use `create*()` returning plain objects
+- **React components** — widgets are `.tsx` files using `useState`/`useEffect` hooks; `useInput` for keyboard handling
+- **Event bus** — every `bus.on()` must store and call its unsubscribe in the `useEffect` cleanup
 - **Layer rules** — widgets never import from `services/` directly; all data via bus + state
 - **No `.then()` chains** — use `async/await` everywhere
 

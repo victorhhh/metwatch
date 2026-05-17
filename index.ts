@@ -3,40 +3,38 @@
 //
 // Initialization order:
 //   1. Load config
-//   2. Create blessed screen
-//   3. Create launcher + log-manager + runtime-manager (if managed procs)
-//   4. Wire launcher → runtime-manager (register inspector on start)
-//   5. Build layout (widgets register bus subscriptions)
-//   6. Start metrics + process managers
-//   7. Launcher starts all managed processes
-//   8. Register global keybindings + signal handlers
-//   9. First screen render
+//   2. Create launcher + log-manager + runtime-manager (if managed procs)
+//   3. Wire launcher → runtime-manager (register inspector on start)
+//   4. Start metrics + process managers
+//   5. Launcher starts all managed processes
+//   6. Render ink/React app
+//   7. Register signal handlers
 //
 // Teardown (quit):
 //   1. Stop polling managers + runtime-manager
 //   2. Stop all managed processes
-//   3. Destroy layout (widgets unsubscribe)
-//   4. Destroy screen (restore terminal)
-//   5. process.exit(0)
+//   3. Unmount ink app
+//   4. process.exit(0)
 // ---------------------------------------------------------------------------
 
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
+import { render } from 'ink';
+import React from 'react';
 
-import { createScreen, destroyScreen }      from './src/ui/screen.ts';
-import { buildLayout }                       from './src/ui/layout.ts';
-import { createMetricsManager }              from './src/core/metrics-manager.ts';
-import { createProcessManager }             from './src/core/process-manager.ts';
-import { createLauncher }                   from './src/core/launcher.ts';
-import { createLogManager }                 from './src/core/log-manager.ts';
-import { createRuntimeManager }             from './src/core/runtime-manager.ts';
-import { bus }                               from './src/core/event-bus.ts';
+import { createMetricsManager }  from './src/core/metrics-manager.ts';
+import { createProcessManager }  from './src/core/process-manager.ts';
+import { createLauncher }        from './src/core/launcher.ts';
+import { createLogManager }      from './src/core/log-manager.ts';
+import { createRuntimeManager }  from './src/core/runtime-manager.ts';
+import { bus }                   from './src/core/event-bus.ts';
 import {
   DEFAULT_CONFIG,
   type MetWatchConfig,
   type ResolvedConfig,
 } from './src/types/config.types.ts';
-import type { ManagedProcessDef }            from './src/types/managed-process.types.ts';
+import type { ManagedProcessDef } from './src/types/managed-process.types.ts';
+import { App } from './src/ui/App.tsx';
 
 // ── Config loading ──────────────────────────────────────────────────────────
 
@@ -84,42 +82,39 @@ export async function main(extraDefs: ManagedProcessDef[] = []): Promise<void> {
   const logManager      = hasManaged ? createLogManager(config.logScrollback ?? 500) : null;
   const runtimeManager  = hasManaged ? createRuntimeManager(config.refreshInterval)  : null;
 
-  // Wire launcher events to runtime-manager so we get inspector connections
-  // automatically whenever a managed process starts or stops.
-  const unsubStarted   = hasManaged ? bus.on('managed:started', ({ id, pid }) => {
-    // The launcher appends --inspect=0; the WS URL is reported on stderr.
-    // We receive it via the log:line event below.
-    void id; void pid;
-  }) : () => undefined;
-
-  // Parse inspector URL from log lines (Node/Bun print it to stderr on start)
+  // Wire launcher events to runtime-manager
   const inspectorUrls = new Map<string, string>();
-  const unsubLogLine  = hasManaged ? bus.on('log:line', ({ id, stream, line }) => {
-    if (stream !== 'stderr') return;
-    // e.g.: "Debugger listening on ws://127.0.0.1:9229/uuid"
-    const m = line.match(/Debugger listening on (ws:\/\/[^\s]+)/);
-    if (m && m[1] && !inspectorUrls.has(id)) {
-      inspectorUrls.set(id, m[1]);
-      // Find the pid from the latest managed:started event via launcher
-      const proc = launcher?.get(id);
-      if (proc?.pid) {
-        runtimeManager?.register(id, proc.pid, m[1]);
+  const managedCount  = mergedDefs.length;
+  let unsubLogLine: (() => void) | null = null;
+
+  if (hasManaged) {
+    unsubLogLine = bus.on('log:line', ({ id, stream, line }) => {
+      if (stream !== 'stderr') return;
+      if (inspectorUrls.has(id)) return;
+      const m = line.match(/Debugger listening on (ws:\/\/[^\s]+)/);
+      if (m && m[1]) {
+        inspectorUrls.set(id, m[1]);
+        const proc = launcher?.get(id);
+        if (proc?.pid) {
+          runtimeManager?.register(id, proc.pid, m[1]);
+        }
+        if (inspectorUrls.size >= managedCount && unsubLogLine) {
+          unsubLogLine();
+          unsubLogLine = null;
+        }
       }
-    }
-  }) : () => undefined;
+    });
+  }
 
-  const unsubStopped  = hasManaged ? bus.on('managed:stopped', ({ id }) => {
+  const unsubStopped = hasManaged ? bus.on('managed:stopped', ({ id }) => {
     runtimeManager?.unregister(id);
     inspectorUrls.delete(id);
   }) : () => undefined;
 
-  const unsubCrashed  = hasManaged ? bus.on('managed:crashed', ({ id }) => {
+  const unsubCrashed = hasManaged ? bus.on('managed:crashed', ({ id }) => {
     runtimeManager?.unregister(id);
     inspectorUrls.delete(id);
   }) : () => undefined;
-
-  const screen = createScreen();
-  const layout = buildLayout({ screen, config, launcher, logManager });
 
   const metricsManager = createMetricsManager({ intervalMs: config.refreshInterval });
   const processManager = createProcessManager(config);
@@ -127,10 +122,20 @@ export async function main(extraDefs: ManagedProcessDef[] = []): Promise<void> {
   metricsManager.start();
   processManager.start();
 
-  // Start managed processes after widgets are ready
   launcher?.startAll();
 
-  // ── Global keybindings ────────────────────────────────────────────────────
+  // ── Error handling ────────────────────────────────────────────────────────
+
+  const unsubError = bus.on('app:error', ({ source, error }) => {
+    process.stderr.write(`[MetWatch] error [${source}]: ${error.message}\n`);
+  });
+
+  process.on('unhandledRejection', (reason) => {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    process.stderr.write(`[MetWatch] unhandledRejection: ${msg}\n`);
+  });
+
+  // ── Teardown ──────────────────────────────────────────────────────────────
 
   function quit(): void {
     bus.emit('ui:quit', undefined);
@@ -139,33 +144,26 @@ export async function main(extraDefs: ManagedProcessDef[] = []): Promise<void> {
     runtimeManager?.stop();
     launcher?.stopAll();
     logManager?.destroy();
-    unsubStarted();
-    unsubLogLine();
+    unsubLogLine?.();
     unsubStopped();
     unsubCrashed();
-    layout.destroy();
-    destroyScreen();
+    unsubError();
+    unmount();
     process.exit(0);
   }
 
-  screen.key(['q', 'C-c'], quit);
+  // ── Render ────────────────────────────────────────────────────────────────
 
-  // ── Error handling ────────────────────────────────────────────────────────
-
-  bus.on('app:error', ({ source, error }) => {
-    void source;
-    void error;
-  });
-
-  // ── First render ──────────────────────────────────────────────────────────
-
-  screen.render();
+  const { unmount } = render(
+    React.createElement(App, { config, launcher, logManager, onQuit: quit }),
+    { exitOnCtrlC: false }
+  );
 
   // ── Signal handling ───────────────────────────────────────────────────────
 
   process.on('SIGTERM', quit);
   process.on('uncaughtException', (err) => {
-    destroyScreen();
+    unmount();
     console.error('[MetWatch] Uncaught exception:', err);
     process.exit(1);
   });
